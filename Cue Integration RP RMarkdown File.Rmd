@@ -1,0 +1,543 @@
+---
+title: "Test"
+output: html_document
+date: '2022-03-01'
+---
+
+```{r}
+#install.packages('tidyverse')
+#install.packages('reshape2')
+#install.packages('tidyr')
+#install.packages('psych')
+#install.packages('plotrix')
+#install.packages('lme4')
+#install.packages('DataCombine')
+#install.packages("dplyr")
+#install.packages("cowplot")
+#install.packages("lme4")
+#install.packages("sjPlot")
+#install.packages("sjmisc")
+#install.packages("effects")
+#install.packages("sjstats")
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(psych)
+library(ggplot2)
+library(DataCombine)
+library(cowplot) #for manuscript ready figures
+library(lme4) #for lmer & glmer models
+library(sjPlot) #for plotting lmer and glmer mods
+library(sjmisc) 
+library(effects)
+library(sjstats) #use for r2 functions
+```
+
+**Trait Section**
+
+```{r}
+# Read in spreadsheet
+getwd()
+dataTrait = read.csv(file = "C:/Users/Edward Margolis/OneDrive - Nexus365/Desktop/data_experiment/trait.csv")
+```
+
+```{r}
+wantedData = c("Participant.Private.ID", "Task.Name", "Zone.Name", "Zone.Type", "Response", "Spreadsheet.Row")
+
+dataWithCorrectCol <- dataTrait[wantedData]
+
+#remove - "5985439", "5985396", "5985366", "5985364", "5985227", "5985226", "5985202", "5985173", "5985136", "5985087", "5985100", ""
+```
+
+```{r}
+dataWithCorrectCol$Participant.Private.ID = as.character(dataWithCorrectCol$Participant.Private.ID)
+
+#exclude participants who had mean outside SD ranges/got the practice trials wrong -> shows they didn't follow our instructions carefully
+dataRemoved = dataWithCorrectCol[!(dataWithCorrectCol$Participant.Private.ID) %in% c('5985439', '5985396', '5985366', '5985364', '5985227', '5985226', '5985202', '5985173', '5985136', '5985087', '5985100', '5985705', '5993889', '5994024', '5994481', '5994638', '5995107', '5995634', '5996105', "5985091", "5985096", "5985104", "5985105", "5985108", "5985124", "5985167", "5985196", "5985239", "5985298", "5985389", "5985482", "5995364", "5997750", "5997826", "5985084", "5985176", "5985206", "5997721", "5985099", "5985127", "5985209"),]
+
+#n = 41 removed outliers
+#n = 53 valid ppts
+
+#select only endValue trials
+dataWithResponse = subset(dataRemoved, Zone.Type %in% c("response_slider_endValue"))
+```
+
+```{r}
+#rename slider/Zone3/Zone7
+dataReplaceName = data.frame(from = c("slider","Zone3","Zone7"), to = c("traitlowBound","traithighBound","traitMean"))
+
+dataRenamed = FindReplace(data = dataWithResponse, Var = "Zone.Name", replaceData = dataReplaceName, from = "from", to = "to", exact = FALSE)
+
+#remove endValue column
+dataRenamed = select(dataRenamed, -Zone.Type)
+```
+
+```{r}
+#order data
+dataOrdered = dataRenamed[,]
+```
+
+```{r}
+#spread across cols
+dataSpread = pivot_wider(dataRenamed, id_expand = TRUE, values_fn = list(), names_from = c("Zone.Name"), values_from = Response)
+
+#unnest values from list-col
+#dataSpreadFull = unnest(dataSpread, 4:6)
+
+#reorder columns
+#dataSpr = dataSpreadFull[, c(1,2,3,4,6,5)]
+
+#remove practice trials
+dataSpr = subset(dataSpread, Spreadsheet.Row != "2")
+
+#participant N
+require(dplyr)
+n_distinct(dataSpr$Participant.Private.ID)
+```
+
+```{r}
+#char to num
+dataSpr$traitlowBound = as.numeric(dataSpr$traitlowBound)
+dataSpr$traithighBound = as.numeric(dataSpr$traithighBound)
+dataSpr$traitMean = as.numeric(dataSpr$traitMean)
+
+dataSpr = dataSpr[, c(1,2,3,4,6,5)]
+```
+
+```{r}
+#add trait names
+dataSpr$traitName = rep(c("fearfulLow" ,"fearfulHigh" ,"angryLow" ,"angryHigh" ,"sadHigh" ,"happyLow" ,"sadLow", "happyHigh"), times = 54)
+```
+
+```{r}
+#check p's with 1 or more messed up trial
+dataSpr$datameanLess = dataSpr$traitMean < dataSpr$traitlowBound
+dataSpr$datameanGreater = dataSpr$traitMean > dataSpr$traithighBound
+
+#make vector count TRUE for meanless OR meangreater
+counted.rows = which(dataSpr$datameanLess | dataSpr$datameanGreater)
+as.integer(counted.rows)
+
+#make mean out of bounds rows = NA
+dataSpr[(counted.rows),] = NA
+```
+
+```{r}
+#remove last 2 rows
+dataMeanTrait = subset(dataSpr, select = -c(8:9))
+
+#rename columns
+dataMeanTrait = dataMeanTrait %>% rename("lowBound" = "traitlowBound", "mean" = "traitMean", "highBound" = "traithighBound", "emotionName" = "traitName")
+```
+
+```{r}
+dataMeanFace = read.csv(file = "C:/Users/Edward Margolis/OneDrive - Nexus365/Desktop/data_experiment/dataMeanTrait.csv")
+
+#remove column 1
+dataMeanFace = subset(dataMeanFace, select = -c(1))
+
+#rename columns
+dataMeanFace = dataMeanFace %>% rename("lowBound" = "facelowBound", "mean" = "faceMean", "highBound" = "facehighBound")
+```
+
+**Combining Face and Trait dataframes**
+
+```{r}
+dataTraitFace = rbind(dataMeanFace, dataMeanTrait)
+```
+
+Clean up data
+```{r}
+#calculate variance and precision
+dataTraitFace$Sd = 
+  (((dataTraitFace$highBound - dataTraitFace$lowBound)/2)/1.1503)
+
+dataTraitFace$variance = 
+  (((dataTraitFace$highBound - dataTraitFace$lowBound)/2)/1.1503)^2
+
+dataTraitFace$precision = 1/dataTraitFace$variance
+
+#create vector with all means of FACE/TRAIT
+faceMeanVec = dataTraitFace[dataTraitFace$Task.Name == "Judgement Task (Face)",]
+
+faceMeanVec = group_by(faceMeanVec, "emotion.Name")
+
+#remove added NA rows from nowhere
+faceMeanVec = faceMeanVec[-c(1729:1740),]
+
+traitMeanVec = dataTraitFace[dataTraitFace$Task.Name == "Judgement Task (Trait)",]
+
+traitMeanVec = group_by(traitMeanVec, "emotion.Name")
+
+traitMeanVec = traitMeanVec[-c(1:37),]
+```
+Options for multiplying via emotionName
+1. Remove groups of 4 rows where one NA is included -> no
+2. Index by emotionName
+ - e.g. 1Trait - 4Face corresponding
+3. Create same number of rows for Trait (x4 all rows)
+
+```{r}
+#duplicate every trait row by 4x
+traitMeanVec = 
+  traitMeanVec[rep(seq_len(nrow(traitMeanVec)), each = 4),]
+```
+
+```{r}
+#compute all 5 model means
+
+#model 1: precision-weighted using wikipedia formula (with precision) -> Leora mode
+traitMeanVec$model1 = (faceMeanVec["mean"]/faceMeanVec["variance"] + traitMeanVec["mean"]/traitMeanVec["variance"])/(1/faceMeanVec["variance"] + 1/traitMeanVec["variance"])
+
+#model 2: precision-weighted using Sam's formula (with SD)
+traitMeanVec$model2 = 
+  (faceMeanVec["mean"] * 
+  (1 - (faceMeanVec["Sd"]/(faceMeanVec["Sd"] + traitMeanVec["Sd"])))) + 
+  (traitMeanVec["mean"] *
+  (1 - (traitMeanVec["Sd"]/(traitMeanVec["Sd"] + faceMeanVec["Sd"]))))
+
+#model 3: simple weighted means
+traitMeanVec$model3 = 
+  (faceMeanVec["mean"] + traitMeanVec["mean"])/2
+
+#model 4: face only
+traitMeanVec$model4 = 
+  (faceMeanVec["mean"])
+
+#model 5: trait only
+traitMeanVec$model5 = 
+  (traitMeanVec["mean"])
+
+write.csv(traitMeanVec, file = "C:/Users/Edward Margolis/OneDrive - Nexus365/Desktop/data_experiment/traitMeanModelMeanFile.csv")
+```
+
+```{r}
+#create dataframe with just model means
+modelMeans = traitMeanVec[12:16]
+modelMeans = cbind(modelMeans, traitMeanVec["emotionName"])
+modelMeans = cbind(modelMeans, traitMeanVec["Participant.Private.ID"])
+order = c(7,1,2,3,4,5,6)
+
+modelMeans = modelMeans[order]
+
+
+comboMeans = read.csv(file = "C:/Users/Edward Margolis/OneDrive - Nexus365/Desktop/data_experiment/comboMeans.csv")
+
+comboMeans = comboMeans["comboMean"]
+```
+
+```{r}
+#bind comboMeans
+totalMeans = cbind(modelMeans, comboMeans)
+
+#remove all rows with NA
+totalMeans = totalMeans[rowSums(is.na(totalMeans)) == 0, ]
+
+#reorder emotionName
+reOrder = c(1,7,2,3,4,5,6,8)
+
+totalMeans = totalMeans[reOrder]
+```
+
+```{r}
+#index all high emotions
+lowMeans = totalMeans$emotionName == c("fearfulLow", "angryLow", "sadLow", "happyLow")
+
+lowMeanTotal = totalMeans[lowMeans,]
+
+highMeans = totalMeans$emotionName == c("fearfulHigh", "angryHigh", "sadHigh", "happyHigh")
+
+highMeanTotal = totalMeans[highMeans,]
+
+highMean = highMeanTotal[c(1,8)]
+
+library(dplyr)
+highmeanStat = group_by(highMean, Participant.Private.ID)
+
+lowMean = lowMeanTotal$comboMean
+
+lowMean = lowMeanTotal[c(1,8)]
+
+lowmeanStat = group_by(lowMean, Participant.Private.ID)
+
+#aggregate means by participant
+aggMeansLow = aggregate(lowmeanStat[2], list(lowmeanStat$Participant.Private.ID), mean)
+
+aggMeansHigh = aggregate(highmeanStat[2], list(highmeanStat$Participant.Private.ID), mean)
+
+HighMeansAggregate = unlist(aggMeansHigh[c(2)])
+LowMeansAggregate = unlist(aggMeansLow[c(2)])
+
+HighDescriptives = summary(HighMeansAggregate)
+
+LowDescriptives = summary(LowMeansAggregate)
+
+#t-test for high vs. low emotion
+meansttest = t.test(LowMeansAggregate, HighMeansAggregate, paired = TRUE, alternative = "two.sided")
+library(effectsize)
+
+print(meansttest)
+
+install.packages("lsr")
+library(lsr)
+
+SDPooled = sqrt(((2.523)^2 + (2.677)^2)/2)
+mDiff = 66.01 - 62.06
+
+1.588504^2
+1.636419^2
+
+mDiff/SDPooled
+
+```
+
+```{r}
+#plotting t test results
+#install.packages("ggplot2")
+library(ggplot2)
+
+#create table
+BarMatrix = cbind(aggMeansHigh[2], aggMeansLow[2])
+
+summary(BarMatrix)
+#install.packages("psych")
+library(psych)
+
+#calculate std.error
+#install.packages('plotrix')
+library('plotrix')
+
+std.error(BarMatrix[1])
+std.error(BarMatrix[2])
+
+BarMatrix$highMean = unlist(BarMatrix[1])
+BarMatrix$lowMean = unlist(BarMatrix[2])
+
+sd(BarMatrix$highMean)
+
+BarMatrix = BarMatrix[-c(1:2)]
+
+cohens_d(BarMatrix$highMean ~ BarMatrix$lowMean, paired = TRUE)
+
+describeBy(BarMatrix)
+
+PlotNames = c("Low Mean Association", "High Mean Association")
+PlotMeans = c(62.06, 66.01)
+PlotError = c(1.636419, 1.588504)
+
+Plotty = data.frame(
+  ExpressionIntensity = PlotNames[2:1],
+  MeanValue = PlotMeans[2:1],
+  sd = PlotError[2:1]
+)
+
+PlottyBotty = ggplot(Plotty) +
+  geom_bar(aes(x = ExpressionIntensity, y = MeanValue), stat = "identity", fill = "skyblue", alpha = 0.7) +
+  geom_errorbar(aes(x = ExpressionIntensity, ymin = MeanValue-sd, ymax = MeanValue+sd), width = 0.3, color = "red", alpha = 0.7, size = 0.8)
+
+PlottyBotty + labs(y = "Judgment Value", x = "Level of Mean Association")
+```
+
+```{r}
+#Plot 4-way ANOVA
+MatANOVA = FullModelMatrix[1:3]
+
+MatANOVA = group_by(MatANOVA, Participant.Private.ID)
+
+#aggregate means by participant -> apply multiple functions at once
+aggMeansMAT = aggregate(MatANOVA[2], list(MatANOVA$emotionName), FUN = function(x) c(mn = mean(x), stdev = sd(x)))
+
+format(aggMeansMAT, digits = 3)
+
+anovadata = read.csv(file = "C:/Users/Edward Margolis/OneDrive - Nexus365/Desktop/anovadata.csv")
+
+ggplot(data = anovadata, aes(x = emotion, y = judgementvalue, colour = intensity)) +
+  geom_boxplot()
+
+FourWayANOVA <- lm(comboMean ~ emotionName, data = FullModelMatrix)
+anova(FourWayANOVA)
+
+TraitAggModel = aggregate(FullModelMatrix, list(FullModelMatrix$emotionName), mean)
+
+aggaddtrait = read.csv(file = "C:/Users/Edward Margolis/OneDrive - Nexus365/Desktop/traitaggmodel.csv")
+
+TraitAggModel = cbind(TraitAggModel, aggaddtrait)
+  
+TraitAggModel = TraitAggModel[-c(1:3)]
+
+TraitAggModel = TraitAggModel[-c(2:7)]
+
+TraitANOVA = TraitAggModel
+
+TraitANOVA = format(TraitANOVA, digits = 3)
+
+TraitANOVA$comboMean = as.numeric(TraitANOVA$comboMean)
+
+ggplot(data = TraitANOVA, aes(x = as.factor(traitName), y = comboMean, fill = as.factor(emotionName))) +
+  geom_bar()
+
+ggplot(TraitANOVA, aes(y=comboMean,x=as.factor(traitName),fill=as.factor(emotionName)))+
+  geom_bar()
+
+#AggModelMatrix = aggregate(FullModelMatrix, list(FullModelMatrix$Participant.Private.ID), mean)
+
+```
+
+```{r}
+#install.packages("lmerTest")
+library("lmerTest")
+
+as.matrix(totalMeans)
+
+dropCol = c(2:7)
+
+#create data matrix
+allModels = as.matrix(totalMeans[dropCol])
+allModels = cbind(totalMeans["Participant.Private.ID"],allModels, totalMeans["comboMean"])
+
+#convert from char to num
+allModels$PrecisionWeightedModel = as.numeric(format(allModels$model1, digits = 2))
+allModels$UnweightedMeanModel = as.numeric(allModels$model3)
+allModels$FaceOnlyModel = as.numeric(allModels$model4)
+allModels$TraitOnlyModel = as.numeric(allModels$model5)
+
+FullModelMatrix = allModels[-c(3:7)]
+
+AggModelMatrix = aggregate(FullModelMatrix, list(FullModelMatrix$Participant.Private.ID), mean)
+
+AggModelMatrix = AggModelMatrix[-c(2:3)]
+
+#do the linear mixed model
+PrecisionWeightModel = 
+  lmer(comboMean ~ 
+         PrecisionWeightedModel + 
+         (1 | Participant.Private.ID), 
+       data = FullModelMatrix)
+summary(PrecisionWeightModel)
+
+UnweightedModel = 
+  lmer(comboMean ~ 
+         UnweightedMeanModel + 
+         (1 | Participant.Private.ID), 
+       data = FullModelMatrix)
+summary(UnweightedModel)
+
+FaceModel = 
+  lmer(comboMean ~ 
+         FaceOnlyModel + 
+         (1 | Participant.Private.ID), 
+       data = FullModelMatrix)
+summary(FaceModel)
+
+TraitModel = 
+  lmer(comboMean ~ 
+         TraitOnlyModel + 
+         (1 | Participant.Private.ID), 
+       data = FullModelMatrix)
+summary(TraitModel)
+      
+#plot residuals
+
+sjPlot::plot_model(PrecisionWeightModel)
+
+FullModelMatrix$PrecisionFit <- predict(PrecisionWeightModel)
+FullModelMatrix$TraitFit <- predict(TraitModel)
+```
+
+```{r}
+#Tabulate Precision-Weighted Model
+sjPlot::tab_model(PrecisionWeightModel, 
+                  show.re.var= TRUE, 
+                  pred.labels =c("(Intercept)", "Precision Weighted Model"),
+                  dv.labels= "Effect of Precision-Weighted Cue Integration")
+
+PrecisionWeightEffects = as.data.frame(effects_PrecisionWeight)
+
+PrecD = 0.05/(sqrt(393.35)) 
+
+#ggplot
+PrecisionWeightPlot <- ggplot(xlim=c(-30,80)) + 
+  #2
+geom_point(data = AggModelMatrix, aes(PrecisionWeightedModel, comboMean)) + 
+  #3
+  geom_point(data = PrecisionWeightEffects, aes(x = PrecisionWeightedModel, y = fit), color="blue") +
+  #4
+  geom_line(data = PrecisionWeightEffects, aes(x=PrecisionWeightedModel, y=fit), color="blue") +
+  #5
+  geom_ribbon(data= PrecisionWeightEffects, aes(x=PrecisionWeightedModel, ymin=lower, ymax=upper), alpha= 0.3, fill="blue") +
+  #6
+  labs(x="Precision Weighted Predicted Means", y="Combination Judgment Means") +
+  xlim(30, 80)
+
+PrecisionWeightPlot
+ggsave(file = "C:/Users/Edward Margolis/OneDrive - Nexus365/Desktop/precisionplot.png", PrecisionWeightPlot)
+```
+
+```{r}
+sjPlot::tab_model(TraitModel, 
+                  show.re.var= TRUE, 
+                  pred.labels =c("(Intercept)", "Trait Only Model"),
+                  dv.labels= "Effect of Trait Only on Emotion Perception")
+
+effects_TraitOnly <- effects::effect(term = "TraitOnlyModel", mod = TraitModel)
+summary(effects_TraitOnly)
+
+TraitOnlyEffects = as.data.frame(effects_TraitOnly)
+
+#ggplot
+TraitOnlyPlot <- ggplot() + 
+  #2
+geom_point(data = AggModelMatrix, aes(TraitOnlyModel, comboMean)) + 
+  #3
+  geom_point(data = TraitOnlyEffects, aes(x = TraitOnlyModel, y = fit), color="blue") +
+  #4
+  geom_line(data = TraitOnlyEffects, aes(x=TraitOnlyModel, y=fit), color="blue") +
+  #5
+  geom_ribbon(data= TraitOnlyEffects, aes(x=TraitOnlyModel, ymin=lower, ymax=upper), alpha= 0.3, fill="blue") +
+  #6
+  labs(x="Trait Only Means", y="Combination Judgment Means") +
+  xlim(30, 70)
+
+TraitOnlyPlot
+ggsave(file = "C:/Users/Edward Margolis/OneDrive - Nexus365/Desktop/traitplot.png", TraitOnlyPlot)
+```
+
+```{r}
+#model comparison
+#install.packages("bbmle")
+library(bbmle)
+bbmle::AICtab(PrecisionWeightModel, TraitModel)
+bbmle::BICtab(PrecisionWeightModel, TraitModel)
+BIC(PrecisionWeightModel, TraitModel)
+
+#install.packages("remotes")
+#remotes::install_github("dustinfife/fifer")
+
+#install.packages("bayestestR")
+library(bayestestR)
+
+#bf.bic(PrecisionWeightModel, TraitModel)
+
+install.packages('see')
+library('see')
+
+comparison <- bayesfactor_models(PrecisionWeightModel, denominator = TraitModel)
+comparison
+
+bayesfactor_model
+
+hdi(comparison, ci = c(0.5, 0.75, 0.89, 0.95))
+ggplot(comparison)
+```
+
+```{r}
+install.packages("MASS")
+library(MASS)
+
+boxcoxModel = boxcox(comboMean ~ PrecisionWeightedModel, data = allModels)
+lambdaModel = boxcoxModel$x[which.max(boxcoxModel$y)]
+
+allModels[allModels == 0] <- 0.01
+```
+
+
